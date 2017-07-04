@@ -69,7 +69,7 @@ from edx_solutions_api_integration.utils import (
     strip_xblock_wrapper_div,
 )
 from .serializers import CourseSerializer
-from .serializers import GradeSerializer, CourseLeadersSerializer, CourseCompletionsLeadersSerializer
+from .serializers import GradeSerializer, CourseProficiencyLeadersSerializer, CourseCompletionsLeadersSerializer
 from progress.serializers import CourseModuleCompletionSerializer
 
 
@@ -1086,7 +1086,7 @@ class CoursesUsersList(SecureListAPIView):
             "last_name",
             "created",
             "is_active",
-            "avatar_url",
+            "profile_image",
             "city",
             "title",
             "country",
@@ -1814,7 +1814,7 @@ class CoursesMetricsGradesLeadersList(SecureListAPIView):
                                                                  count=count,
                                                                  exclude_users=exclude_users)
 
-        serializer = CourseLeadersSerializer(leaderboard_data['queryset'], many=True)
+        serializer = CourseProficiencyLeadersSerializer(leaderboard_data['queryset'], many=True)
         data['leaders'] = serializer.data  # pylint: disable=E1101
         data['course_avg'] = leaderboard_data['course_avg']
         if 'user_position' in leaderboard_data:

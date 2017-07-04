@@ -5,6 +5,7 @@ from rest_framework import serializers
 from rest_framework.reverse import reverse
 
 from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
+from edx_solutions_api_integration.utils import get_profile_image_urls_by_username
 
 
 class GradeSerializer(serializers.Serializer):
@@ -12,23 +13,31 @@ class GradeSerializer(serializers.Serializer):
     grade = serializers.FloatField()
 
 
-class CourseLeadersSerializer(serializers.Serializer):
-    """ Serializer for course leaderboard """
+class BaseCourseLeadersSerializer(serializers.Serializer):
+    """ Base Serializer for course leaderboard """
     id = serializers.IntegerField(source='user__id')  # pylint: disable=invalid-name
     username = serializers.CharField(source='user__username')
     title = serializers.CharField(source='user__profile__title')
-    avatar_url = serializers.CharField(source='user__profile__avatar_url')
+    profile_image = serializers.SerializerMethodField()
+
+    def get_profile_image(self, data):
+        """
+        Returns metadata about a user's profile image
+        """
+        return get_profile_image_urls_by_username(
+            data['user__username'], data['user__profile__profile_image_uploaded_at']
+        )
+
+
+class CourseProficiencyLeadersSerializer(BaseCourseLeadersSerializer):
+    """ Serializer for course proficiency leaderboard """
     # Percentage grade (versus letter grade)
     grade = serializers.FloatField()
     recorded = serializers.DateTimeField(source='modified')
 
 
-class CourseCompletionsLeadersSerializer(serializers.Serializer):
+class CourseCompletionsLeadersSerializer(BaseCourseLeadersSerializer):
     """ Serializer for course completions leaderboard """
-    id = serializers.IntegerField(source='user__id')  # pylint: disable=invalid-name
-    username = serializers.CharField(source='user__username')
-    title = serializers.CharField(source='user__profile__title')
-    avatar_url = serializers.CharField(source='user__profile__avatar_url')
     completions = serializers.SerializerMethodField('get_completion_percentage')
 
     def get_completion_percentage(self, obj):

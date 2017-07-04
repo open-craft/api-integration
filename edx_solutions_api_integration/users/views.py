@@ -56,7 +56,12 @@ from edx_solutions_api_integration.permissions import SecureAPIView, SecureListA
     HasOrgsFilterBackend
 from edx_solutions_api_integration.models import GroupProfile, APIUser as User
 from edx_solutions_organizations.serializers import BasicOrganizationSerializer
-from edx_solutions_api_integration.utils import generate_base_uri, dict_has_items, extract_data_params
+from edx_solutions_api_integration.utils import (
+    generate_base_uri,
+    dict_has_items,
+    extract_data_params,
+    get_profile_image_urls_by_username,
+)
 from edx_solutions_projects.serializers import BasicWorkgroupSerializer
 from .serializers import UserSerializer, UserCountByCitySerializer, UserRolesSerializer
 
@@ -74,8 +79,9 @@ def _serialize_user_profile(response_data, user_profile):
     response_data['level_of_education'] = user_profile.level_of_education
     response_data['year_of_birth'] = user_profile.year_of_birth
     response_data['gender'] = user_profile.gender
-    response_data['avatar_url'] = user_profile.avatar_url
-
+    response_data['profile_image'] = get_profile_image_urls_by_username(
+        response_data['username'], user_profile.profile_image_uploaded_at
+    )
     return response_data
 
 
@@ -239,7 +245,6 @@ class UsersList(SecureListAPIView):
         * level_of_education
         * year_of_birth, Four-digit integer value
         * gender, Single-character value (M/F)
-        * avatar_url, pointer to the avatar/image resource
     - POST Example:
 
             {
@@ -255,8 +260,7 @@ class UsersList(SecureListAPIView):
                 "country" : "US",
                 "level_of_education" : "hs",
                 "year_of_birth" : "1996",
-                "gender" : "F",
-                "avatar_url" : "http://example.com/avatar.png"
+                "gender" : "F"
             }
     ### Use Cases/Notes:
     * Password formatting policies can be enabled through the "ENFORCE_PASSWORD_POLICY" feature flag
@@ -347,7 +351,6 @@ class UsersList(SecureListAPIView):
         year_of_birth = request.data.get('year_of_birth', '')
         gender = request.data.get('gender', '')
         title = request.data.get('title', '')
-        avatar_url = request.data.get('avatar_url', None)
         # enforce password complexity as an optional feature
         if settings.FEATURES.get('ENFORCE_PASSWORD_POLICY', False):
             try:
@@ -397,7 +400,6 @@ class UsersList(SecureListAPIView):
         profile.level_of_education = level_of_education
         profile.gender = gender
         profile.title = title
-        profile.avatar_url = avatar_url
         profile.is_staff = is_staff
 
         try:
@@ -448,7 +450,6 @@ class UsersDetail(SecureAPIView):
         * level_of_education
         * year_of_birth, Four-digit integer value
         * gender, Single-character value (M/F)
-        * avatar_url, pointer to the avatar/image resource
     - POST Example:
 
             {
@@ -464,8 +465,7 @@ class UsersDetail(SecureAPIView):
                 "country" : "US",
                 "level_of_education" : "hs",
                 "year_of_birth" : "1996",
-                "gender" : "F",
-                "avatar_url" : "http://example.com/avatar.png"
+                "gender" : "F"
             }
     ### Use Cases/Notes:
     * Use the UsersDetail view to obtain the current state for a specific User
@@ -655,10 +655,6 @@ class UsersDetail(SecureAPIView):
             # Empty title is also allowed
             title = request.data.get('title', existing_user_profile.title)
             existing_user_profile.title = title
-            avatar_url = request.data.get('avatar_url')
-            if avatar_url:
-                existing_user_profile.avatar_url = avatar_url
-
             existing_user_profile.save()
         return Response(response_data, status=status.HTTP_200_OK)
 
