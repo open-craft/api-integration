@@ -1,369 +1,284 @@
 """ API implementation for course-oriented interactions. """
 
-import sys
-from collections import OrderedDict
-import logging
-import itertools
-from lxml import etree
-from StringIO import StringIO
-from datetime import timedelta
+import sys from collections import OrderedDict import logging import itertools
+from lxml import etree from StringIO import StringIO from datetime import
+timedelta
 
-from django.conf import settings
-from django.contrib.auth.models import Group, User
-from django.core.exceptions import ObjectDoesNotExist
-from django.core.cache import cache
-from django.db.models import Count, Max, Min
-from django.http import Http404
-from django.utils.translation import ugettext_lazy as _
-from django.db.models import Q, F
-from opaque_keys.edx.keys import UsageKey
+from django.conf import settings from django.contrib.auth.models import Group,
+User from django.core.exceptions import ObjectDoesNotExist from
+django.core.cache import cache from django.db.models import Count, Max, Min
+from django.http import Http404 from django.utils.translation import
+ugettext_lazy as _ from django.db.models import Q, F
 
-from requests.exceptions import ConnectionError
+from completion.models import BlockCompletion from opaque_keys.edx.keys import
+UsageKey from requests.exceptions import ConnectionError from rest_framework
+import status from rest_framework.response import Response
 
-from rest_framework import status
-from rest_framework.response import Response
+from courseware.courses import get_course_about_section,
+get_course_info_section, get_course_info_section_module from courseware.models
+import StudentModule from courseware.views.views import get_static_tab_contents
+from mobile_api.course_info.views import apply_wrappers_to_content from
+openedx.core.lib.xblock_utils import get_course_update_items from
+openedx.core.lib.courses import course_image_url from
+openedx.core.djangoapps.content.course_overviews.models import CourseOverview
+from openedx.core.djangoapps.content.course_structures.api.v0.api import
+course_structure from
+openedx.core.djangoapps.content.course_structures.api.v0.errors import
+CourseStructureNotAvailableError from django_comment_common.models import
+FORUM_ROLE_MODERATOR from gradebook.models import StudentGradebook from
+instructor.access import revoke_access, update_forum_role from
+lms.lib.comment_client.user import get_course_social_stats from
+lms.lib.comment_client.thread import get_course_thread_stats from
+lms.lib.comment_client.utils import CommentClientRequestError,
+CommentClientMaintenanceError from lms.djangoapps.course_api.blocks.api import
+get_blocks from opaque_keys import InvalidKeyError from progress.models import
+StudentProgress from edx_solutions_projects.models import Project, Workgroup
+from edx_solutions_projects.serializers import ProjectSerializer,
+BasicWorkgroupSerializer from student.models import CourseEnrollment,
+CourseEnrollmentAllowed from student.roles import CourseAccessRole,
+CourseInstructorRole, CourseStaffRole, CourseObserverRole, \
+        CourseAssistantRole, UserBasedRole from xmodule.modulestore.django
+import modulestore from xmodule.modulestore.search import path_to_location from
+xmodule.modulestore.exceptions import ItemNotFoundError from
+course_metadata.models import CourseAggregatedMetaData, CourseSetting
 
-from courseware.courses import get_course_about_section, get_course_info_section, get_course_info_section_module
-from courseware.models import StudentModule
-from courseware.views.views import get_static_tab_contents
-from mobile_api.course_info.views import apply_wrappers_to_content
-from openedx.core.lib.xblock_utils import get_course_update_items
-from openedx.core.lib.courses import course_image_url
-from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
-from openedx.core.djangoapps.content.course_structures.api.v0.api import course_structure
-from openedx.core.djangoapps.content.course_structures.api.v0.errors import CourseStructureNotAvailableError
-from django_comment_common.models import FORUM_ROLE_MODERATOR
-from gradebook.models import StudentGradebook
-from instructor.access import revoke_access, update_forum_role
-from lms.lib.comment_client.user import get_course_social_stats
-from lms.lib.comment_client.thread import get_course_thread_stats
-from lms.lib.comment_client.utils import CommentClientRequestError, CommentClientMaintenanceError
-from lms.djangoapps.course_api.blocks.api import get_blocks
-from opaque_keys import InvalidKeyError
-from progress.models import StudentProgress
-from edx_solutions_projects.models import Project, Workgroup
-from edx_solutions_projects.serializers import ProjectSerializer, BasicWorkgroupSerializer
-from student.models import CourseEnrollment, CourseEnrollmentAllowed
-from student.roles import CourseAccessRole, CourseInstructorRole, CourseStaffRole, CourseObserverRole, \
-    CourseAssistantRole, UserBasedRole
-from xmodule.modulestore.django import modulestore
-from xmodule.modulestore.search import path_to_location
-from xmodule.modulestore.exceptions import ItemNotFoundError
-from course_metadata.models import CourseAggregatedMetaData, CourseSetting
-
-from edx_solutions_api_integration.courses.serializers import UserGradebookSerializer
-from edx_solutions_api_integration.courseware_access import (
-    get_course,
-    get_course_child,
-    get_course_key,
-    course_exists,
-    get_course_child_key,
-)
-from edx_solutions_api_integration.models import (
-    CourseGroupRelationship,
-    CourseContentGroupRelationship,
-    GroupProfile,
-)
-from progress.models import CourseModuleCompletion
-from social_engagement.models import StudentSocialEngagementScore
-from edx_solutions_api_integration.permissions import SecureAPIView, SecureListAPIView, MobileAPIView
-from edx_solutions_api_integration.users.serializers import UserSerializer, UserCountByCitySerializer
-from edx_solutions_api_integration.utils import (
-    generate_base_uri,
-    str2bool,
-    get_time_series_data,
-    parse_datetime,
-    get_ids_from_list_param,
-    strip_xblock_wrapper_div,
-    get_cached_data,
-    cache_course_data,
-    cache_course_user_data,
-    get_aggregate_exclusion_user_ids,
-    get_user_from_request_params,
-    css_param_to_list,
-)
-from edx_solutions_api_integration.courses.serializers import (
-    CourseSerializer,
-    GradeSerializer,
-    CourseCompletionsLeadersSerializer,
-    CourseSocialLeadersSerializer,
-    CourseProficiencyLeadersSerializer,
-)
+from edx_solutions_api_integration.courses.serializers import
+UserGradebookSerializer from edx_solutions_api_integration.courseware_access
+import ( get_course, get_course_child, get_course_key, course_exists,
+        get_course_child_key,) from edx_solutions_api_integration.models import
+( CourseGroupRelationship, CourseContentGroupRelationship, GroupProfile,) from
+progress.models import CourseModuleCompletion from social_engagement.models
+import StudentSocialEngagementScore from
+edx_solutions_api_integration.permissions import SecureAPIView,
+SecureListAPIView, MobileAPIView from
+edx_solutions_api_integration.users.serializers import UserSerializer,
+UserCountByCitySerializer from edx_solutions_api_integration.utils import (
+    generate_base_uri, str2bool, get_time_series_data, parse_datetime,
+    get_ids_from_list_param, strip_xblock_wrapper_div, get_cached_data,
+    cache_course_data, cache_course_user_data,
+    get_aggregate_exclusion_user_ids, get_user_from_request_params,
+    css_param_to_list,) from edx_solutions_api_integration.courses.serializers
+import ( CourseSerializer, GradeSerializer, CourseCompletionsLeadersSerializer,
+        CourseSocialLeadersSerializer, CourseProficiencyLeadersSerializer,)
 from progress.serializers import CourseModuleCompletionSerializer
 
 
-BLOCK_DATA_FIELDS = ['children', 'display_name', 'type', 'due', 'start']
-log = logging.getLogger(__name__)
+BLOCK_DATA_FIELDS = ['children', 'display_name', 'type', 'due', 'start'] log =
+logging.getLogger(__name__)
 
 
-def _inner_content(tag):
-    """
-    Helper method
-    """
-    inner_content = None
-    if tag is not None:
-        inner_content = tag.text if tag.text else u''
-        inner_content += u''.join(etree.tostring(e) for e in tag)  # pylint: disable=E1101
-        inner_content += tag.tail if tag.tail else u''
+def _inner_content(tag): """ Helper method """ inner_content = None if tag is
+not None: inner_content = tag.text if tag.text else u'' inner_content +=
+u''.join(etree.tostring(e) for e in tag)  # pylint: disable=E1101 inner_content
++= tag.tail if tag.tail else u''
 
     return inner_content
 
 
-def _parse_overview_html(html):
-    """
-    Helper method to break up the course about HTML into components
-    Overview content is stored in MongoDB (aka, the module store) with the following naming convention
+def _parse_overview_html(html): """ Helper method to break up the course about
+HTML into components Overview content is stored in MongoDB (aka, the module
+store) with the following naming convention
 
-            {
-                "_id.org":"i4x",
-                "_id.course":<course_num>,
-                "_id.category":"about",
-                "_id.name":"overview"
-            }
-    """
-    result = {}
+            { "_id.org":"i4x", "_id.course":<course_num>,
+            "_id.category":"about", "_id.name":"overview" } """ result = {}
 
-    parser = etree.HTMLParser()  # pylint: disable=E1101
-    tree = etree.parse(StringIO(html), parser)  # pylint: disable=E1101
+    parser = etree.HTMLParser()  # pylint: disable=E1101 tree =
+    etree.parse(StringIO(html), parser)  # pylint: disable=E1101
 
     sections = tree.findall('/body/section')
 
-    result = []
-    for section in sections:
-        section_class = section.get('class')
-        if section_class:
-            section_data = OrderedDict()
-            section_data['class'] = section_class
+    result = [] for section in sections: section_class = section.get('class')
+    if section_class: section_data = OrderedDict() section_data['class'] =
+    section_class
 
-            section_data['attributes'] = {}
-            for attribute_key in section.keys():
-                # don't return the class attribute as we are already using the class attribute
-                # as a key name to the result set, so we don't want to end up duplicating it
+            section_data['attributes'] = {} for attribute_key in
+            section.keys():
+                # don't return the class attribute as we are already using the
+                # class attribute as a key name to the result set, so we don't
+                # want to end up duplicating it
                 if attribute_key != 'class':
-                    section_data['attributes'][attribute_key] = section.get(attribute_key)
+                    section_data['attributes'][attribute_key] =
+                    section.get(attribute_key)
 
-            articles = section.findall('article')
-            if articles:
-                section_data['articles'] = []
-                for article in articles:
-                    article_class = article.get('class')
-                    if article_class:
-                        article_data = OrderedDict()
-                        article_data['class'] = article_class
+            articles = section.findall('article') if articles:
+                section_data['articles'] = [] for article in articles:
+                    article_class = article.get('class') if article_class:
+                        article_data = OrderedDict() article_data['class'] =
+                        article_class
 
                         if article_class == "teacher":
 
-                            name_element = article.find('h3')
-                            if name_element is not None:
-                                article_data['name'] = name_element.text
+                            name_element = article.find('h3') if name_element
+                            is not None: article_data['name'] =
+                            name_element.text
 
-                            image_element = article.find("./div[@class='teacher-image']/img")
+                            image_element =
+                            article.find("./div[@class='teacher-image']/img")
                             if image_element is not None:
-                                article_data['image_src'] = image_element.get('src')
+                                article_data['image_src'] =
+                                image_element.get('src')
 
-                            bios = article.findall('p')
-                            bio_html = ''
-                            for bio in bios:
-                                bio_html += etree.tostring(bio)  # pylint: disable=E1101
+                            bios = article.findall('p') bio_html = '' for bio
+                            in bios: bio_html += etree.tostring(bio)  # pylint:
+                                disable=E1101
 
-                            if bio_html:
-                                article_data['bio'] = bio_html
-                        else:
-                            article_data['body'] = _inner_content(article)
+                            if bio_html: article_data['bio'] = bio_html else:
+                                article_data['body'] = _inner_content(article)
 
-                        section_data['articles'].append(article_data)
-            else:
-                section_data['body'] = _inner_content(section)
+                        section_data['articles'].append(article_data) else:
+                            section_data['body'] = _inner_content(section)
 
             result.append(section_data)
 
     return result
 
 
-def _manage_role(course_descriptor, user, role, action):
-    """
-    Helper method for managing course/forum roles
-    """
-    supported_roles = ('instructor', 'staff', 'observer', 'assistant')
-    forum_moderator_roles = ('instructor', 'staff', 'assistant')
-    if role not in supported_roles:
-        raise ValueError
-    if action is 'allow':
-        existing_role = CourseAccessRole.objects.filter(
-            user=user,
-            role=role,
-            course_id=course_descriptor.id,
-            org=course_descriptor.org
-        )
-        if not existing_role:
-            new_role = CourseAccessRole(user=user, role=role, course_id=course_descriptor.id, org=course_descriptor.org)
-            new_role.save()
-        if role in forum_moderator_roles:
-            update_forum_role(course_descriptor.id, user, FORUM_ROLE_MODERATOR, 'allow')
-    elif action is 'revoke':
-        revoke_access(course_descriptor, user, role)
-        if role in forum_moderator_roles:
-            # There's a possibilty that the user may play more than one role in a course
-            # And that more than one of these roles allow for forum moderation
-            # So we need to confirm the removed role was the only role for this user for this course
-            # Before we can safely remove the corresponding forum moderator role
-            user_instructor_courses = UserBasedRole(user, CourseInstructorRole.ROLE).courses_with_role()
-            user_staff_courses = UserBasedRole(user, CourseStaffRole.ROLE).courses_with_role()
-            user_assistant_courses = UserBasedRole(user, CourseAssistantRole.ROLE).courses_with_role()
-            queryset = user_instructor_courses | user_staff_courses | user_assistant_courses
-            queryset = queryset.filter(course_id=course_descriptor.id)
-            if len(queryset) == 0:
-                update_forum_role(course_descriptor.id, user, FORUM_ROLE_MODERATOR, 'revoke')
+def _manage_role(course_descriptor, user, role, action): """ Helper method for
+managing course/forum roles """ supported_roles = ('instructor', 'staff',
+                                                   'observer', 'assistant')
+forum_moderator_roles = ('instructor', 'staff', 'assistant') if role not in
+supported_roles: raise ValueError if action is 'allow': existing_role =
+CourseAccessRole.objects.filter( user=user, role=role,
+                                course_id=course_descriptor.id,
+                                org=course_descriptor.org) if not
+existing_role: new_role = CourseAccessRole(user=user, role=role,
+                                           course_id=course_descriptor.id,
+                                           org=course_descriptor.org)
+new_role.save() if role in forum_moderator_roles:
+    update_forum_role(course_descriptor.id, user, FORUM_ROLE_MODERATOR,
+                      'allow') elif action is 'revoke':
+        revoke_access(course_descriptor, user, role) if role in
+        forum_moderator_roles:
+            # There's a possibilty that the user may play more than one role in
+            # a course And that more than one of these roles allow for forum
+            # moderation So we need to confirm the removed role was the only
+            # role for this user for this course Before we can safely remove
+            # the corresponding forum moderator role
+            user_instructor_courses = UserBasedRole(user,
+                                                    CourseInstructorRole.ROLE).courses_with_role()
+            user_staff_courses = UserBasedRole(user,
+                                               CourseStaffRole.ROLE).courses_with_role()
+            user_assistant_courses = UserBasedRole(user,
+                                                   CourseAssistantRole.ROLE).courses_with_role()
+            queryset = user_instructor_courses | user_staff_courses |
+            user_assistant_courses queryset =
+            queryset.filter(course_id=course_descriptor.id) if len(queryset) ==
+            0: update_forum_role(course_descriptor.id, user,
+                                 FORUM_ROLE_MODERATOR, 'revoke')
 
 
-def _make_block_tree(request, blocks_data, course_key, course_block, block=None, depth=1, usage_key=None, content_block=None):    # pylint: disable=line-too-long
-    """
-    Its a nested method that will return a serialized details
-    of a content block and its children depending on the depth.
-    usage_key must be provided in case of no root/parent block.
-    """
-    data = {}
-    children = []
+def _make_block_tree(request, blocks_data, course_key, course_block,
+                     block=None, depth=1, usage_key=None, content_block=None):
+    # pylint: disable=line-too-long """ Its a nested method that will return a
+    serialized details of a content block and its children depending on the
+    depth.  usage_key must be provided in case of no root/parent block.  """
+    data = {} children = []
 
-    base_content_uri = '{}://{}/api/server/courses'.format(
-        request.scheme,
-        request.get_host()
-    )
+    base_content_uri = '{}://{}/api/server/courses'.format( request.scheme,
+    request.get_host())
 
-    if block:
-        data['id'] = block.get('id', None)
-        data['name'] = block.get('display_name', None)
-        data['due'] = block.get('due', None)
-        data['start'] = block.get('start', None)
-        data['category'] = block.get('type', None)
+    if block: data['id'] = block.get('id', None) data['name'] =
+    block.get('display_name', None) data['due'] = block.get('due', None)
+    data['start'] = block.get('start', None) data['category'] =
+    block.get('type', None)
 
-        if 'children' in block and depth > 0:
-            for child in block['children']:
-                child_content = _make_block_tree(
-                    request, blocks_data, course_key, course_block, blocks_data[child], depth-1
-                )
-                children.append(child_content)
+        if 'children' in block and depth > 0: for child in block['children']:
+            child_content = _make_block_tree( request, blocks_data, course_key,
+            course_block, blocks_data[child], depth-1)
+            children.append(child_content)
 
-        if data['category'] and data['category'] == 'course':
-            content_id = unicode(course_block.id)
-            content_uri = '{}/{}'.format(base_content_uri, content_id)
-            data['content'] = children
-            data['end'] = getattr(course_block, 'end', None)
-            data['number'] = course_block.location.course
-            data['org'] = course_block.location.org
-            data['id'] = unicode(course_block.id)
-        else:
-            data['children'] = children
-            content_uri = '{}/{}/content/{}'.format(base_content_uri, unicode(course_key), data['id'])
+        if data['category'] and data['category'] == 'course': content_id =
+        unicode(course_block.id) content_uri = '{}/{}'.format(base_content_uri,
+        content_id) data['content'] = children data['end'] =
+        getattr(course_block, 'end', None) data['number'] =
+        course_block.location.course data['org'] = course_block.location.org
+        data['id'] = unicode(course_block.id) else: data['children'] = children
+        content_uri = '{}/{}/content/{}'.format(base_content_uri,
+        unicode(course_key), data['id'])
 
         data['uri'] = content_uri
 
-        include_fields = request.query_params.get('include_fields', None)
-        if include_fields:
-            include_fields = include_fields.split(',')
-            for field in include_fields:
-                data[field] = getattr(content_block, field, None)
-        return data
-    else:
+        include_fields = request.query_params.get('include_fields', None) if
+        include_fields: include_fields = include_fields.split(',') for field in
+        include_fields: data[field] = getattr(content_block, field, None)
+        return data else:
         # result from the course block method includes the parent block too.
         # usage_key is needed as we have to filter out that parent block.
-        if usage_key is None:
-            raise KeyError("Usage key must be provided")
+        if usage_key is None: raise KeyError("Usage key must be provided")
 
-        for block_key, block_value in blocks_data.items():
-            if block_key != unicode(usage_key):
-                children.append(
-                    _make_block_tree(request, blocks_data, course_key, course_block, block_value, depth - 1)
-                )
-        return children
+        for block_key, block_value in blocks_data.items(): if block_key !=
+        unicode(usage_key): children.append( _make_block_tree(request,
+        blocks_data, course_key, course_block, block_value, depth - 1)) return
+        children
 
 
-def _get_static_tab_contents(request, course, tab, strip_wrapper_div=True):
-    """
-    Wrapper around get_static_tab_contents to cache contents for the given static tab
-    """
+def _get_static_tab_contents(request, course, tab, strip_wrapper_div=True): """
+Wrapper around get_static_tab_contents to cache contents for the given static
+tab """
 
-    cache_key = u'course.{course_id}.static.tab.{url_slug}.contents'.format(course_id=course.id, url_slug=tab.url_slug)
-    contents = cache.get(cache_key)
-    if contents is None:
+    cache_key =
+    u'course.{course_id}.static.tab.{url_slug}.contents'.format(course_id=course.id,
+    url_slug=tab.url_slug) contents = cache.get(cache_key) if contents is None:
         contents = get_static_tab_contents(request, course, tab)
         _cache_static_tab_contents(cache_key, contents)
 
-    if strip_wrapper_div:
-        contents = strip_xblock_wrapper_div(contents)
-    return contents
+    if strip_wrapper_div: contents = strip_xblock_wrapper_div(contents) return
+    contents
 
 
-def _cache_static_tab_contents(cache_key, contents):
-    """
-    Caches course static tab contents.
-    """
-    cache_expiration = getattr(settings, 'STATIC_TAB_CONTENTS_CACHE_TTL', 60 * 5)
-    contents_max_size_limit = getattr(settings, 'STATIC_TAB_CONTENTS_CACHE_MAX_SIZE_LIMIT', 4000)
+def _cache_static_tab_contents(cache_key, contents): """ Caches course static
+tab contents.  """ cache_expiration = getattr(settings,
+'STATIC_TAB_CONTENTS_CACHE_TTL', 60 * 5) contents_max_size_limit =
+getattr(settings, 'STATIC_TAB_CONTENTS_CACHE_MAX_SIZE_LIMIT', 4000)
 
     if not sys.getsizeof(contents) > contents_max_size_limit:
         cache.set(cache_key, contents, cache_expiration)
 
 
-def _get_course_progress_metrics(course_key, user_id=None, exclude_users=None, org_ids=None, group_ids=None):
-    """
-    returns a dict containing these course progress metrics
-    `course_avg`: average progress in course
-    `completions`: given user's progress percentage
-    `position`: given user's position in progress leaderboard
-    `total_users`: total user's enrolled
-    `total_possible_completions`: total possible modules to be completed
-    """
-    course_avg = 0
-    data = {'course_avg': course_avg}
-    course_metadata = CourseAggregatedMetaData.get_from_id(course_key)
-    total_possible_completions = float(course_metadata.total_assessments)
-    total_actual_completions = StudentProgress.get_total_completions(course_key, exclude_users=exclude_users,
-                                                                     org_ids=org_ids, group_ids=group_ids)
-    if user_id:
-        user_data = StudentProgress.get_user_position(course_key, user_id, exclude_users=exclude_users)
-        data['position'] = user_data['position']
-        user_completions = user_data['completions']
-        completion_percentage = 0
-        if total_possible_completions > 0:
-            completion_percentage = min(100 * (user_completions / total_possible_completions), 100)
-        data['completions'] = completion_percentage
+def _get_course_progress_metrics(course_key, user_id=None, exclude_users=None,
+org_ids=None, group_ids=None): """ returns a dict containing these course
+progress metrics `course_avg`: average progress in course `completions`: given
+user's progress percentage `position`: given user's position in progress
+leaderboard `total_users`: total user's enrolled `total_possible_completions`:
+    total possible modules to be completed """ course_avg = 0 data =
+    {'course_avg': course_avg} course_metadata =
+    CourseAggregatedMetaData.get_from_id(course_key) total_possible_completions
+    = float(course_metadata.total_assessments) total_actual_completions =
+    StudentProgress.get_total_completions(course_key,
+    exclude_users=exclude_users, org_ids=org_ids, group_ids=group_ids) if
+    user_id: user_data = StudentProgress.get_user_position(course_key, user_id,
+    exclude_users=exclude_users) data['position'] = user_data['position']
+    user_completions = user_data['completions'] completion_percentage = 0 if
+    total_possible_completions > 0: completion_percentage = min(100 *
+    (user_completions / total_possible_completions), 100) data['completions'] =
+    completion_percentage
 
-    total_users_qs = CourseEnrollment.objects.users_enrolled_in(course_key).exclude(id__in=exclude_users)
-    if org_ids:
-        total_users_qs = total_users_qs.filter(organizations__in=org_ids)
-    if group_ids:
+    total_users_qs =
+    CourseEnrollment.objects.users_enrolled_in(course_key).exclude(id__in=exclude_users)
+    if org_ids: total_users_qs =
+    total_users_qs.filter(organizations__in=org_ids) if group_ids:
         total_users_qs = total_users_qs.filter(groups__in=group_ids).distinct()
-    total_users = total_users_qs.count()
-    if total_users and total_actual_completions and total_possible_completions:
-        course_avg = total_actual_completions / float(total_users)
-        course_avg = min(100 * (course_avg / total_possible_completions), 100)  # avg in percentage
-    data['course_avg'] = course_avg
-    data['total_users'] = total_users
-    data['total_possible_completions'] = total_possible_completions
-    return data
+        total_users = total_users_qs.count() if total_users and
+        total_actual_completions and total_possible_completions: course_avg =
+        total_actual_completions / float(total_users) course_avg = min(100 *
+        (course_avg / total_possible_completions), 100)  # avg in percentage
+        data['course_avg'] = course_avg data['total_users'] = total_users
+        data['total_possible_completions'] = total_possible_completions return
+        data
 
 
-class CourseContentList(SecureAPIView):
-    """
-    **Use Case**
+class CourseContentList(SecureAPIView): """ **Use Case**
 
-        CourseContentList gets a collection of content for a given
-        course. You can use the **uri** value in
-        the response to get details for that content entity.
+        CourseContentList gets a collection of content for a given course. You
+        can use the **uri** value in the response to get details for that
+        content entity.
 
         CourseContentList has an optional type parameter that allows you to
         filter the response by content type. The value of the type parameter
         matches the category value in the response. Valid values for the type
         parameter are:
 
-        * chapter
-        * sequential
-        * vertical
-        * html
-        * problem
-        * discussion
-        * video
+        * chapter * sequential * vertical * html * problem * discussion * video
         * [CONFIRM]
 
     **Example requests**:
@@ -384,8 +299,7 @@ class CourseContentList(SecureAPIView):
 
         * id: The unique identifier for the content entity.
 
-        * name: The name of the course.
-    """
+        * name: The name of the course.  """
 
     def get(self, request, course_id, content_id=None):
         """
@@ -1528,49 +1442,22 @@ class CourseModuleCompletionList(SecureListAPIView):
         if not course_exists(self.request, self.request.user, course_id):
             raise Http404
         course_key = get_course_key(course_id)
-        queryset = CourseModuleCompletion.objects.filter(course_id=course_key).select_related('user')
+        queryset = BlockCompletion.objects.filter(course_id=course_key).select_related('user')
         user_ids = get_ids_from_list_param(self.request, 'user_id')
         if user_ids:
             queryset = queryset.filter(user__in=user_ids)
 
         if content_id:
-            content_descriptor, content_key, existing_content = get_course_child(self.request, self.request.user, course_key, content_id)  # pylint: disable=W0612,C0301
+            content_descriptor, content_key, _ = get_course_child(
+                self.request,
+                self.request.user,
+                course_key,
+                content_id
+            )
             if not content_descriptor:
                 raise Http404
-            queryset = queryset.filter(content_id=content_key)
-
-        if stage:
-            queryset = queryset.filter(stage=stage)
-
+            queryset = queryset.filter(block_key=content_key)
         return queryset
-
-    def post(self, request, course_id):
-        """
-        POST /api/courses/{course_id}/completions/
-        """
-        content_id = request.data.get('content_id', None)
-        user_id = request.data.get('user_id', None)
-        stage = request.data.get('stage', None)
-        if not content_id:
-            return Response({'message': _('content_id is missing')}, status.HTTP_400_BAD_REQUEST)
-        if not user_id:
-            return Response({'message': _('user_id is missing')}, status.HTTP_400_BAD_REQUEST)
-        if not course_exists(request, request.user, course_id):
-            return Response({}, status=status.HTTP_404_NOT_FOUND)
-        course_key = get_course_key(course_id)
-        content_descriptor, content_key, existing_content = get_course_child(request, request.user, course_key, content_id)  # pylint: disable=W0612,C0301
-        if not content_descriptor:
-            return Response({'message': _('content_id is invalid')}, status.HTTP_400_BAD_REQUEST)
-
-        completion, created = CourseModuleCompletion.objects.get_or_create(user_id=user_id,
-                                                                           course_id=course_key,
-                                                                           content_id=content_key,
-                                                                           stage=stage)
-        serializer = CourseModuleCompletionSerializer(completion)
-        if created:
-            return Response(serializer.data, status=status.HTTP_201_CREATED)  # pylint: disable=E1101
-        else:
-            return Response({'message': _('Resource already exists')}, status=status.HTTP_409_CONFLICT)
 
 
 class CoursesMetricsGradesList(SecureListAPIView):
@@ -1737,7 +1624,7 @@ class CoursesMetrics(SecureAPIView):
         if 'thread_stats' in metrics_required:
             try:
                 data['thread_stats'] = get_course_thread_stats(slash_course_id)
-            except (CommentClientMaintenanceError, CommentClientRequestError, ConnectionError), e:
+            except (CommentClientMaintenanceError, CommentClientRequestError, ConnectionError) as e:
                 logging.error("Forum service returned an error: %s", str(e))
 
                 data = {
@@ -2169,7 +2056,7 @@ class CoursesMetricsSocial(SecureListAPIView):
 
             data = {'total_enrollments': total_enrollments, 'users': data}
             http_status = status.HTTP_200_OK
-        except (CommentClientMaintenanceError, CommentClientRequestError, ConnectionError), e:  # pylint: disable=C0103
+        except (CommentClientMaintenanceError, CommentClientRequestError, ConnectionError) as e:  # pylint: disable=C0103
             logging.error("Forum service returned an error: %s", str(e))
 
             data = {
